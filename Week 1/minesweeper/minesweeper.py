@@ -2,6 +2,7 @@ import itertools
 import random
 from copy import deepcopy
 
+
 class Minesweeper():
     """
     Minesweeper game representation
@@ -107,7 +108,7 @@ class Sentence():
         """
         if len(self.cells) == self.count:
             return self.cells
-        return set ()
+        return set()
 
     def known_safes(self):
         """
@@ -115,7 +116,7 @@ class Sentence():
         """
         if self.count == 0:
             return self.cells
-        return set ()
+        return set()
 
     def mark_mine(self, cell):
         """
@@ -174,8 +175,7 @@ class MinesweeperAI():
         for sentence in self.knowledge:
             sentence.mark_safe(cell)
 
-
-    def get_neighbors(self, cell):
+    def get_neighbors(self, cell, count):
         """
             Given a cell, return a set of neighbors
         """
@@ -188,46 +188,58 @@ class MinesweeperAI():
 
         for i in range(start_i, end_i):
             for j in range(start_j, end_j):
-                if not(i == cell_i and j == cell_j) and (i, j) not in self.safes and (i, j) not in self.mines:
-                    neighbors.add((i,j))
-        return neighbors
+                if not (i == cell_i and j == cell_j) and (i, j) not in self.safes and (i, j) not in self.mines:
+                    neighbors.add((i, j))
+                elif (i, j) in self.mines:
+                    count -= 1
+
+        return neighbors, count
     
-    def aditional_safe_or_mines(self):
-        knowlege_changed = True
-        while knowlege_changed:
-            knowlege_changed = False
-            safes = set()
-            mines = set()
-
-            for sentence in self.knowledge:
-                safes.update(sentence.known_safes())
-                mines.update(sentence.known_mines())
-
-            for safe in safes - self.safes:
-                self.mark_safe(safe)
-                knowlege_changed = True
-
-            for mine in mines - self.mines:
-                self.mark_mine(mine)
-                knowlege_changed = True
-
-            self.knowledge = [s for s in self.knowledge if s.cells]
-        
-    def new_rules_from_inference(self):
+    def additional_safe_or_mines(self):
+        """
+            After new knowledge is added, update the sentences
+            to keep only the cells with an unknow state
+        """
         knowledge_changed = False
-        for sentence1 in self.knowledge:
-            for sentence2 in self.knowledge:
-                if sentence1 != sentence2 and sentence1.cells.issubset(sentence2.cells):
-                    new_cells = sentence2.cells - sentence1.cells
-                    new_count = sentence2.count - sentence1.count
-                    new_sentence = Sentence(new_cells, new_count)
+        temp_safes = set()
+        temp_mines = set()
 
+        for sentence in self.knowledge:
+            temp_safes.update(sentence.known_safes())
+            temp_mines.update(sentence.known_mines())      
+
+        for mine in temp_mines:
+            if mine not in self.mines:
+                self.mark_mine(mine)
+                knowledge_changed = True
+
+        for safe in temp_safes:
+            if safe not in self.safes:
+                self.mark_safe(safe)
+                knowledge_changed = True
+        
+        # Removing empty sets
+        self.knowledge = [x for x in self.knowledge if x.cells]      
+
+        return knowledge_changed
+
+    def infeering_new_senteces(self):
+        """
+            If a knowledge is a subset of another it is possible
+            to create a new sentece with he subset
+        """
+        knowledge_changed = False
+        kb = deepcopy(self.knowledge)  # Prevent unwanted updates
+        for sent1 in kb:
+            for sent2 in kb:
+                if sent1 != sent2 and sent1.cells.issubset(sent2.cells):
+                    new_cells = sent2.cells - sent1.cells
+                    new_count = sent2.count - sent1.count
+                    new_sentence = Sentence(new_cells, new_count)
                     if new_sentence not in self.knowledge:
-                        print("Novo conhecimento inferido")
                         self.knowledge.append(new_sentence)
                         knowledge_changed = True
         return knowledge_changed
-                        
 
     def add_knowledge(self, cell, count):
         """
@@ -251,24 +263,18 @@ class MinesweeperAI():
         self.mark_safe(cell)
 
         # 3
-        # Gerando mais uma base de conhecimento de acordo tendo
-        # as celulas vizinhas e quantas possiveis bombas tem ali
-        neighbors = self.get_neighbors(cell)
-        sentence = Sentence(neighbors, count)
-        self.knowledge.append(sentence)
+        # Generating a new knowledge base knowing the neighbor 
+        # cells and the count of mines around
+        neighbors, count = self.get_neighbors(cell, count)
+        if neighbors:
+            sentence = Sentence(neighbors, count)
+            self.knowledge.append(sentence)
         
+        # 4: additional_safe_or_mines
+        # 5: infeering_new_sentences
         knowledge_changed = True
         while knowledge_changed:
-            # 4
-            # Agora tendo mais uma base de conhecimento, verificamos se 
-            # da para verificar se uma outra celula é segura sem nem ter
-            # clicado nela. O mesmo vale para uma mina 
-            self.aditional_safe_or_mines()
-
-            # 5
-            # Fazendo novas inferencias
-            # Se set1 eh um subconjunto de s2, uma nova sentenca pode ser feita
-            knowledge_changed = self.new_rules_from_inference()
+            knowledge_changed = self.additional_safe_or_mines() or self.infeering_new_senteces()
 
     def make_safe_move(self):
         """
