@@ -101,11 +101,11 @@ class CrosswordCreator():
         (Remove any values that are inconsistent with a variable's unary
          constraints; in this case, the length of the word.)
         """
-        # Percorre todas as variaveis e remove as palavras cujo tamanho seja diferente do tamanho da variavel
-        for variable in self.domains.keys():
-            var_length = variable.length
-            words = [x for x in self.domains[variable] if len(x) == var_length]
-            self.domains[variable] = set(words)
+        # remove uma palavra do dominio de uma variavel quando a quantidade de letras for diferente do tamanho
+        for v in self.crossword.variables:
+            for x in self.domains[v].copy():
+                if len(x) != v.length:
+                    self.domains[v].remove(x)
         
     def revise(self, x, y):
         """
@@ -117,19 +117,35 @@ class CrosswordCreator():
         False if no revision was made.
         """
 
-        overlap = self.crossword.overlaps[x, y]
+        overlaps = self.crossword.overlaps[x, y]
 
-        # If no overlap occurs, then no revision must be done
-        if overlap is None:
+        if overlaps is None: 
+            # Se nao ha sobreposicao, entao nao ha conflitos, logo nao ha modificacoes
             return False
-    
+
+        i, j = overlaps
+
         revised = False
-        i, j = overlap
-        for word_x in set(self.domains[x]):
-            if not any(word_x[i] == word_y[j] for word_y in self.domains[y]):
+        for word_x in self.domains[x].copy():
+            # Se para toda word_x nao ha uma word_y que nao da conflito, entao pode remover word_x
+            if all(word_x[i] != word_y[j] for word_y in self.domains[y]):
                 self.domains[x].remove(word_x)
                 revised = True
         return revised
+
+    def make_queue(self, arcs):
+        queue = Queue()  # Importado na linha 5
+        
+        if arcs is not None:
+            for arc in arcs:
+                queue.put(arc)
+            return queue
+        
+        for var in self.domains.keys():
+            for neighbor in self.crossword.neighbors(var):
+                queue.put((var, neighbor))
+        
+        return queue
 
     def ac3(self, arcs=None):
         """
@@ -140,65 +156,52 @@ class CrosswordCreator():
         Return True if arc consistency is enforced and no domains are empty;
         return False if one or more domains end up empty.
         """
-        queue = Queue()
-
-        if arcs is not None:
-            for arc in arcs: 
-                queue.put(arc)
-        else:
-            for var in self.domains:
-                for neighbor in self.crossword.neighbors(var):
-                    if self.crossword.overlaps[(var, neighbor)] is not None:
-                        queue.put((var, neighbor))
-
+        queue = self.make_queue(arcs)
+        
         while not queue.empty():
-            X, Y = queue.get()
-            if self.revise(X, Y):
-                if len(self.domains[X]) == 0: 
+            (x, y) = queue.get()
+            if self.revise(x, y):
+                # Se o dominio esta vazio, nao ha como satisfazer a restrição
+                if len(self.domains[x]) == 0:
                     return False
                 
-                for Z in self.crossword.neighbors(X) - set([Y]):
-                    queue.put((Z, X))
-        
-        return True
+                for z in self.crossword.neighbors(x) - set([y]):
+                    queue.put((z, x))
 
     def assignment_complete(self, assignment):
         """
         Return True if `assignment` is complete (i.e., assigns a value to each
         crossword variable); return False otherwise.
         """
-        # Assignment is a dictionary where the keys are Variable objects and the values are strings representing the words those variables will take on.
-        # An assignment is complete if every crossword variable is assigned to a value
-        return all(variable in assignment for variable in self.crossword.variables)
+        # assignment eh um dicinario que a chave eh uma variavel e o valor eh uma palavra qualquer
+        # como eh chamada pela funcao backtracking, pode ser que ainda faltem variaveis
+        # se uma variavel esta aqui, um valor foi atribuido para ela. entao deve-se verificar se todas
+        #   as variaveis possuem um valor qualquer no assignmet
+        return all(x in assignment.keys() for x in self.crossword.variables)
 
     def consistent(self, assignment):
         """
         Return True if `assignment` is consistent (i.e., words fit in crossword
         puzzle without conflicting characters); return False otherwise.
         """
-        # all values are distinct, every value is the correct length, and there are no conflicts between neighboring variables
-        # A conflict in the context of the crossword puzzle is a square for which two variables disagree on what character value it should take on
-        
-        # All values are distinct
+        # all values are distinct
         if len(set(assignment.values())) != len(assignment):
             return False
 
         # every value is the correct length
-        for var, word in assignment.items():
-            if len(word) != var.length:
+        for var in assignment.keys():
+            if len(assignment[var]) != var.length:
                 return False
 
         # there are no conflicts between neighboring variables
-        for var in assignment:
+        for var in assignment.keys():
             for neighbor in self.crossword.neighbors(var):
                 if neighbor in assignment:
-                    overlap = self.crossword.overlaps[var, neighbor]
-                    if overlap is not None:
-                        i, j = overlap
-                        if assignment[var][i] != assignment[neighbor][j]:
-                            return False
-                
-        return True       
+                    i, j = self.crossword.overlaps[var, neighbor]
+                    if assignment[var][i] != assignment[neighbor][j]:
+                        return False
+        
+        return True
 
     def order_domain_values(self, var, assignment):
         """
@@ -207,11 +210,13 @@ class CrosswordCreator():
         The first value in the list, for example, should be the one
         that rules out the fewest values among the neighbors of `var`.
         """
+        # Retorna a variavel que vai causar menos eliminações de outros dominios
+
         least_constraining = {}
 
+        # O que ja foi atribuido nao pode ser modificado
         neighbors = set(self.crossword.neighbors(var)) - set(assignment)
 
-        # For each word in the var domain, check how many values it rules out among the neighbors.
         for word in self.domains[var]:
             eliminations = 0
             for neighbour in neighbors:
@@ -219,13 +224,13 @@ class CrosswordCreator():
                 if overlap is None:
                     continue
 
-                x_over, y_over = overlap
-                for neighbour_word in self.domains[neighbour]:  # Use neighbour (singular) here.
-                    if word[x_over] != neighbour_word[y_over]:
+                i, j = overlap
+                for neighbour_word in self.domains[neighbour]:
+                    if word[i] != neighbour_word[j]:
                         eliminations += 1
             least_constraining[word] = eliminations
 
-        # Sort values by their number of eliminations (least constraining first)
+        # Ordena de forma ascendente, o least constraining vem primeiro
         return sorted(self.domains[var], key=lambda k: least_constraining[k])
 
     def select_unassigned_variable(self, assignment):
@@ -238,23 +243,26 @@ class CrosswordCreator():
         """
         unassigned = [v for v in self.crossword.variables if v not in assignment]
         
+        # minimum remaining value in domain
+        # Ordena pela menor quantidade de itens no dominio
         mnrm = sorted(unassigned, key=lambda x: len(self.domains[x]))
+        # Pega todas as variaveis que tem a mesma quantidade de itens que a que tem menos
         mnrm = [x for x in mnrm if len(self.domains[x]) == len(self.domains[mnrm[0]])]
 
         if len(mnrm) == 1: 
             return mnrm[0]
-
-        # A tie happenned. Then it must look for the variable with the highest degree
-        result_value = mnrm[0]
+        
+        # Se ocorreu um empate, entao tem que olhar pela variavel com maior grau (mais vizinhos)
+        return_variable = mnrm[0]
         highest_degree = self.crossword.neighbors(mnrm[0]) 
 
         for other in mnrm[1:]:
             degree = self.crossword.neighbors(mnrm[0]) 
             if degree > highest_degree:
-                result_value = other
+                return_variable = other
                 highest_degree = other
 
-        return result_value
+        return return_variable
 
     def backtrack(self, assignment):
         """
