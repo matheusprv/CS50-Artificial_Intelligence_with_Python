@@ -1,0 +1,10 @@
+N V
+N V Det N
+N V Det N P N
+N V P Det Adj N Conj N V
+Det N V Det Adj N
+N V P N
+N Adv V Det N Conj N V P Det N Adv
+N V Adv Conj V Det N
+N V Det Adj N P N Conj V N P Det Adj N
+N V Det Adj Adj Adj N P Det N P Det N
